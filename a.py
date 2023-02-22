@@ -4,6 +4,7 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import plotly.express as px
+import numpy as np
 
 
 # ---------------- Data gathering ----------------
@@ -23,6 +24,42 @@ def FiltrarDiaA(df, dia, mes, ano):
 
 df = FiltrarDiaA(df, 13, 5, 2021)
 df = FiltrarDiaB(df, 31, 5, 2021)
+
+
+# SQL Queries and connector
+sql_con = sqlite3.connect("Simulacao.db")
+benef_con = sqlite3.connect("Saida.db")
+
+id_rad_ = 12
+benef_query = f'''
+SELECT data, IlumA, ThermA, COALESCE (id_rad1, id_rad2) as id_radiuino FROM (
+(SELECT distinct data FROM beneficio_anualizado)
+
+LEFT JOIN 
+(SELECT data, id_radiuino as id_rad1, valor as IlumA 
+FROM beneficio_anualizado 
+WHERE tipo = 1 and id_radiuino = {id_rad_}) 
+USING (data)
+
+LEFT JOIN 
+(SELECT data, id_radiuino as id_rad2, valor as ThermA 
+FROM beneficio_anualizado 
+WHERE tipo = 2 and id_radiuino = {id_rad_}) 
+USING (data));
+'''
+
+demanda_query = f'''
+SELECT data, dem_ilum, dem_therm, COALESCE (id_rad1, id_rad2) as id_radiuino FROM (
+(SELECT Data as data, demanda as dem_ilum, id_radiuino as id_rad1 FROM demanda_ilum_5)
+
+LEFT JOIN
+(SELECT data, demanda as dem_therm, id_radiuino as id_rad2 FROM demanda_therm_5)
+USING (data));
+'''
+
+df_dem = pd.read_sql_query(con=sql_con, sql=demanda_query)
+df_dem.index = pd.to_datetime(df_dem["data"])
+df_dem = df_dem.groupby(df_dem.index.date).sum()
 # ------------------------------------------------
 
 
@@ -30,14 +67,30 @@ df = FiltrarDiaB(df, 31, 5, 2021)
 st.set_page_config(layout = "wide")
 
 # Page selection on the sidebar
-st.sidebar.title("Sidebar Title")
+st.sidebar.title("GeniIoT Dashboard")
 page = st.sidebar.selectbox(label="Seleção de página",
                             options=["Consumo", "PEE", "Sistema"])
 
 
 # Page development
 def RenderPageConsumo():
-    col1, col2 = st.columns([1, 4])
+    yAxis_dem = {"Demanda das Lâmpadas": "dem_ilum",
+                'Demanda do Ar-Condicionado': "dem_therm"}
+
+    col11, col12 = st.columns([1, 4])
+    with st.container():
+        with col11:
+            st.text("")
+            st.text("")
+            st.text("")
+            demSelect = st.multiselect(label="Selecione o Aparelho", 
+                                       options=["Demanda das Lâmpadas", "Demanda do Ar-Condicionado"])
+        
+        demShow = [yAxis_dem[i] for i in demSelect]
+        with col12:
+            dem_fig = px.line(data_frame=df_dem, x=df_dem.index, y=demShow)
+            st.plotly_chart(dem_fig)
+            
 
     # Dictionary relating the selection box value to
     # the column name at the data frame
@@ -47,6 +100,8 @@ def RenderPageConsumo():
             'Humidity (%)': "Umid2-dht22 (%)",
             'AC Use (A)': ["Corrente1 (A)", "Corrente2 (A)"]}
 
+
+    col1, col2 = st.columns([1, 4])
     # At the first container
     with st.container():
         # col1 = selection box
@@ -54,7 +109,7 @@ def RenderPageConsumo():
             st.text("")
             st.text("")
             st.text("")
-            variable = st.selectbox(label="",
+            variable = st.selectbox(label="Selectione a Variável",
                                     options=["Temperature (ºC)", 
                                             "Luminosity (LUX)", 
                                             "CO2 (ppm)", 
@@ -85,7 +140,8 @@ def RenderPageConsumo():
             st.text("")
             st.text("")
             st.text("")
-            tempSelect = st.multiselect(label="", options=["Door", "Center", "Window"])
+            tempSelect = st.multiselect(label="Selecione o Sensor de Temperatura", 
+                                        options=["Door", "Center", "Window"])
             tempShow = [tempSelectDict[i] for i in tempSelect]
         
         with col22:
@@ -96,7 +152,8 @@ def RenderPageConsumo():
             st.text("")
             st.text("")
             st.text("")
-            HumSelect = st.multiselect(label="", options=["Door", "Center", "Window"], key="aaaaaaa")
+            HumSelect = st.multiselect(label="Selecione o Sensor de Umidade", 
+                                       options=["Door", "Center", "Window"], key="aaaaaaa")
             HumShow = [HumSelectDict[i] for i in HumSelect]
         
         with col24:
@@ -106,27 +163,7 @@ def RenderPageConsumo():
 
 
 def RenderPagePEE():
-    benef_con = sqlite3.connect("Saida.db")
-
-    id_rad_ = 12
-    query = f'''
-    SELECT data, IlumA, ThermA, COALESCE (id_rad1, id_rad2) as id_radiuino FROM (
-    (SELECT distinct data FROM beneficio_anualizado)
-    
-    LEFT JOIN 
-    (SELECT data, id_radiuino as id_rad1, valor as IlumA 
-    FROM beneficio_anualizado 
-    WHERE tipo = 1 and id_radiuino = {id_rad_}) 
-    USING (data)
-    
-    LEFT JOIN 
-    (SELECT data, id_radiuino as id_rad2, valor as ThermA 
-    FROM beneficio_anualizado 
-    WHERE tipo = 2 and id_radiuino = {id_rad_}) 
-    USING (data));
-    '''
-
-    df = pd.read_sql_query(sql=query, con=benef_con)
+    df = pd.read_sql_query(sql=benef_query, con=sql_con)
 
     col1, col2 = st.columns([1, 4])
 
@@ -146,10 +183,10 @@ def RenderPagePEE():
 
 match page:
     case "Consumo":
-        st.title("Essa é a pagina 1")
+        st.title("Visualização da Sala e Demanda")
         RenderPageConsumo()
     case "PEE":
-        st.title("Essa é a pagina 2")
+        st.title("Evolução de PEE")
         RenderPagePEE()
     case "Sistema":
-        st.title("Essa é a pagina 3")
+        st.title("Visualização do Sistema")
